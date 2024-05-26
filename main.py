@@ -102,8 +102,8 @@ class Douyin_Spider(object):
     时间在day_gap天内
     """
 
-    def __init__(self, start_video_id, account_id='89079537399', result_count=20, maxium_fans_count=3000,
-                 minimum_favorite_count=10000, day_gap=7):
+    def __init__(self, start_video_id, account_id='89079537399', result_count=20, rule ='default',
+                  day_gap=7,) -> None:
         """
         初始化函数，设置爬虫的参数，
         :param start_video_id:  起始视频id
@@ -116,8 +116,7 @@ class Douyin_Spider(object):
         self.account_file = Path(BASE_DIR / "douyin_cookies" / (str(account_id) + ".json"))
         self.start_video_id = start_video_id
         self.result_count = result_count
-        self.maxium_fans_count = maxium_fans_count
-        self.minimum_favorite_count = minimum_favorite_count
+        self.rule = rule
         self.day_gap = day_gap
         self.recursion_depth = config.MAX_RECURSION_DEPTH
         self.result = []
@@ -205,17 +204,26 @@ class Douyin_Spider(object):
                     r_author_fans_count = None
                 if r_favorite_count <= self.minimum_favorite_count:
                     logger.spiderlogger.info(f"[-] 推荐视频{r_video_id}，作者{r_author_id}，点赞{r_favorite_count}不符合要求")
-                    continue
+                    # 30%的概率to be continued
+                    if random.random() <= config.random_incidences:
+                        logger.spiderlogger.info(f"[-] roll 低于 random_incidence，下钻递归")
+                    else:
+                        logger.spiderlogger.info(f"[-] roll 高于 random_incidence，跳过")
+                        continue
                 elif r_author_fans_count is not None and convert_numbers(r_author_fans_count) >= self.maxium_fans_count:
                     logger.spiderlogger.info(f"[-] 推荐视频{r_video_id}，作者{r_author_id}，粉丝数{r_author_fans_count}不符合要求")
-                    continue
+                    if random.random() <= config.random_incidences:
+                        logger.spiderlogger.info(f"[-] roll 低于 random_incidence，下钻递归")
+                    else:
+                        logger.spiderlogger.info(f"[-] roll 高于 random_incidence，跳过")
+                        continue
                 else:
                     logger.spiderlogger.info(f"[+] 推荐视频{r_video_id}，作者{r_author_id}，点赞{r_favorite_count}符合要求,获取信息中")
-                    # playwright 打开一个新页面,获取视频信息
-                    new_page = await page.context.new_page()
-                    await self.process_video(new_page,r_video_id,recursion_depth+1)
-                    # sleep 5s
-                    await asyncio.sleep(5)
+                # playwright 打开一个新页面,获取视频信息
+                new_page = await page.context.new_page()
+                await self.process_video(new_page,r_video_id,recursion_depth+1)
+                # sleep 5s
+                await asyncio.sleep(5)
             except Exception as e:
                 logger.spiderlogger.error(e,exc_info=True)
                 logger.spiderlogger.error(f"[-] 视频获取推荐视频信息失败，跳过")
@@ -297,13 +305,21 @@ class Douyin_Spider(object):
         :param video_info:
         :return:
         """
+        rule = config.rule.get(self.rule)
         # 如果传入视频是启动视频，则返回True
         if video_info['video_id'] == self.start_video_id:
             return True
         # 判断后续条件
-        if video_info['author']['author_fans_count'] >= self.maxium_fans_count:
+        if video_info['author']['author_fans_count'] >= rule.get('max_fans'):
+            logger.spiderlogger.info(f"[-] 视频id{video_info['video_id']}，作者{video_info['author']['author_name']}，粉丝数{video_info['author']['author_fans_count']} 小于 {rule.get('max_fans')} 不符合要求")
             return False
-        if video_info['video_detail']['like_count'] <= self.minimum_favorite_count:
+        if rule.get('max_favorites') is not None :
+            if video_info['video_detail']['like_count'] >= rule.get('max_favorites'):
+                logger.spiderlogger.info(f"[-] 视频id{video_info['video_id']}，作者{video_info['author']['author_name']}，点赞数{video_info['video_detail']['like_count']} 大于 {rule.get('max_favorites')} 不符合要求")
+                return False
+
+        if video_info['video_detail']['like_count'] <= rule.get('min_favorites'):
+            logger.spiderlogger.info(f"[-] 视频id{video_info['video_id']}，作者{video_info['author']['author_name']}，点赞数{video_info['video_detail']['like_count']} 小于 {rule.get('min_favorites')} 不符合要求")
             return False
         now = datetime.now()
         # 判断视频发布时间是否在day_gap天内
